@@ -69,6 +69,17 @@
 #include <tuple>
 #include <utility>
 
+// added for auto auto tuning
+#include <iostream>
+#include <fstream>
+#include <chrono>
+#include <ctime>
+
+static std::ofstream auto2Log;
+static bool print_auto2_log_header = true;
+#define AUTO2_LOG_FILE_NAME "/home/vseeker/workspace/tmp/auto2.log"
+// ---------------------
+
 using namespace llvm;
 
 #define DEBUG_TYPE "loop-unroll"
@@ -331,7 +342,7 @@ struct EstimatedUnrollCost {
 /// \returns Optional value, holding the RolledDynamicCost and UnrolledCost. If
 /// the analysis failed (no benefits expected from the unrolling, or the loop is
 /// too big to analyze), the returned value is None.
-static Optional<EstimatedUnrollCost> analyzeLoopUnrollCost(
+static Optional<EstimatedUnrollCost> analyzeLoopUnrollCost_original(
     const Loop *L, unsigned TripCount, DominatorTree &DT, ScalarEvolution &SE,
     const SmallPtrSetImpl<const Value *> &EphValues,
     const TargetTransformInfo &TTI, unsigned MaxUnrolledLoopSize,
@@ -342,15 +353,28 @@ static Optional<EstimatedUnrollCost> analyzeLoopUnrollCost(
   assert(MaxIterationsCountToAnalyze <
              (unsigned)(std::numeric_limits<int>::max() / 2) &&
          "The unroll iterations max is too large!");
-
+  
   // Only analyze inner loops. We can't properly estimate cost of nested loops
   // and we won't visit inner loops again anyway.
-  if (!L->isInnermost())
+  if (!L->isInnermost()) {
+    DEBUG_WITH_TYPE("auto2",
+      auto2Log.open(AUTO2_LOG_FILE_NAME, std::ios::out | std::ios::app);
+      auto2Log << "Early exit: Innermost loop\n";
+      auto2Log.close();
+    );
+
     return None;
+  }
 
   // Don't simulate loops with a big or unknown tripcount
-  if (!TripCount || TripCount > MaxIterationsCountToAnalyze)
+  if (!TripCount || TripCount > MaxIterationsCountToAnalyze) {
+    DEBUG_WITH_TYPE("auto2",
+      auto2Log.open(AUTO2_LOG_FILE_NAME, std::ios::out | std::ios::app);
+      auto2Log << "Early exit: tripcount unknown or too big\n";
+      auto2Log.close();
+    );
     return None;
+  }
 
   SmallSetVector<BasicBlock *, 16> BBWorklist;
   SmallSetVector<std::pair<BasicBlock *, BasicBlock *>, 4> ExitWorklist;
@@ -643,6 +667,38 @@ static Optional<EstimatedUnrollCost> analyzeLoopUnrollCost(
   return {{UnrolledCost, RolledDynamicCost}};
 }
 
+static Optional<EstimatedUnrollCost> analyzeLoopUnrollCost(
+  const Loop *L, unsigned TripCount, DominatorTree &DT, ScalarEvolution &SE,
+  const SmallPtrSetImpl<const Value *> &EphValues,
+  const TargetTransformInfo &TTI, unsigned MaxUnrolledLoopSize,
+  unsigned MaxIterationsCountToAnalyze) {
+
+    DEBUG_WITH_TYPE("auto2",
+      auto2Log.open(AUTO2_LOG_FILE_NAME, std::ios::out | std::ios::app);
+      auto2Log << "analyzeLoopUnrollCost called\n";
+      auto2Log.close();
+    );
+
+    Optional<EstimatedUnrollCost> Cost = analyzeLoopUnrollCost_original(
+                                              L, TripCount, DT, SE, EphValues,
+                                              TTI, MaxUnrolledLoopSize, 
+                                              MaxIterationsCountToAnalyze);
+
+    DEBUG_WITH_TYPE("auto2",
+      auto2Log.open(AUTO2_LOG_FILE_NAME, std::ios::out | std::ios::app);
+
+      if(!Cost)
+        auto2Log << "Cost Result: null\n";
+      else
+        auto2Log << "Cost Result: UnrolledCost " << Cost->UnrolledCost 
+                 << " RolledDynamicCost: " << Cost->RolledDynamicCost << "\n";
+
+      auto2Log.close();
+    );
+
+    return Cost;
+}
+
 /// ApproximateLoopSize - Approximate the size of the loop.
 unsigned llvm::ApproximateLoopSize(
     const Loop *L, unsigned &NumCalls, bool &NotDuplicatable, bool &Convergent,
@@ -823,10 +879,45 @@ bool llvm::computeUnrollCount(
   if (FullUnrollTripCount && FullUnrollTripCount <= UP.FullUnrollMaxCount) {
     // When computing the unrolled size, note that BEInsns are not replicated
     // like the rest of the loop body.
-    if (getUnrolledLoopSize(LoopSize, UP) < UP.Threshold) {
+    uint64_t unrolledLoopSize = getUnrolledLoopSize(LoopSize, UP);
+
+
+
+    DEBUG_WITH_TYPE("auto2",
+      auto2Log.open(AUTO2_LOG_FILE_NAME, std::ios::out | std::ios::app);
+      if (print_auto2_log_header) {
+        std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+
+        auto2Log << "\n\nAuto2 log start for LoopUnrollPass.cpp:analyzeLoopUnrollCost # "
+                 << std::ctime(&now) << "\n";
+        print_auto2_log_header = false;
+      }
+
+      auto2Log << "full unrolling considered\n"; // TODO specify loop here?
+
+      auto2Log << "Loop Name: " << L->getName().str() << "\n";
+      auto2Log << "Loop ID: " << L->getLoopID() << "\n";
+      auto2Log << "Debug Start Loc: " << L->getStartLoc().getLine() << "," << L->getStartLoc().getCol() << "\n";
+
+      auto2Log << "unrolledLoopSize: " << unrolledLoopSize << "\n";
+      auto2Log.close();
+    );
+
+
+
+    if (unrolledLoopSize < UP.Threshold) {
       UseUpperBound = (FullUnrollMaxTripCount == FullUnrollTripCount);
       TripCount = FullUnrollTripCount;
       TripMultiple = UP.UpperBound ? 1 : TripMultiple;
+
+
+      DEBUG_WITH_TYPE("auto2",
+        auto2Log.open(AUTO2_LOG_FILE_NAME, std::ios::out | std::ios::app);
+        auto2Log << "Loop fully unrolled without analysis\n";
+        auto2Log.close();
+      );
+
+
       return ExplicitUnroll;
     } else {
       // The loop isn't that small, but we still can fully unroll it if that
