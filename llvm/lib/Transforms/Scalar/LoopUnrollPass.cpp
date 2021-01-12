@@ -77,11 +77,14 @@ using namespace llvm;
 #define AUTO2
 
 #ifdef AUTO2
+// TODO add your own namespace
+
 #include <iostream>
 #include <fstream>
 #include <chrono>
 #include <ctime>
 #include <mutex>
+#include <sstream>
 
 #define AUTO2_HOME "/home/vseeker/workspace/tmp"
 #define AUTO2_CONFIG_FILE_NAME AUTO2_HOME "/auto2.config"
@@ -103,9 +106,13 @@ std::once_flag auto2_init;
 Optional<A2Config> auto2_config;
 std::ofstream auto2Log;
 
-void load_auto2_config() {
-  DEBUG_WITH_TYPE("auto2", dbgs() << "Loading aut2 config file " << AUTO2_CONFIG_FILE_NAME);
+void print_header() {
+    std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    AUTO2_LOG("\nAuto2 log: LoopUnrollPass.cpp:analyzeLoopUnrollCost # "
+              << std::ctime(&now) << "\n");
+}
 
+void load_config() {
   std::ifstream in (AUTO2_CONFIG_FILE_NAME, std::ios::in);
   if (in.is_open()) {
     std::string logfile = "NA";
@@ -118,29 +125,31 @@ void load_auto2_config() {
       if (line.empty()) continue;
 
       if (count == 0) logfile = line;
-      if (count == 1) pname = line;
+      else if (count == 1) pname = line;
       else  data += line + "\n";
     
       count++;
     }
 
     // TODO handle malformed config
-    
-    auto2_config = {{logfile, pname, data}};
-    
-    // TODO refactor to config loading and header printing
-    std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    AUTO2_LOG("\n\nAuto2 log start for LoopUnrollPass.cpp:analyzeLoopUnrollCost # "
-              << std::ctime(&now) << "\n");
 
+    auto2_config = {{logfile, pname, data}};   
   } else {
-      DEBUG_WITH_TYPE("auto2", dbgs() << "ERROR: Loading auto2 config failed.");
+      DEBUG_WITH_TYPE("auto2", dbgs() << "ERROR: Loading auto2 config failed.\n");
       auto2_config = None;
   }
 
   in.close();
 }
-#else 
+
+void initialise_auto2() {
+  DEBUG_WITH_TYPE("auto2", dbgs() << "Loading aut2 config file " << AUTO2_CONFIG_FILE_NAME << "\n");
+  load_config();
+  if (auto2_config) { // loading successful
+    print_header();
+  }
+}
+#else
 
 #define AUTO2_LOG(msg)
 
@@ -735,65 +744,55 @@ static Optional<EstimatedUnrollCost> analyzeLoopUnrollCost(
                                               L, TripCount, DT, SE, EphValues,
                                               TTI, MaxUnrolledLoopSize, 
                                               MaxIterationsCountToAnalyze);
-    Optional<EstimatedUnrollCost> Cost = Cost_orig;
-    // TODO parse auto2 config data and set it accordingly
+    Optional<EstimatedUnrollCost> Cost;
 
-    // Optional<EstimatedUnrollCost> Cost;
-    
-    // auto2Log.open(AUTO2_LOG_FILE_NAME, std::ios::out | std::ios::app);
+    if (!auto2_config) {
+      DEBUG_WITH_TYPE("auto2", dbgs() << "WARNING: Auto2 config not found. Using original values.\n");     
+      Cost = Cost_orig;
+    } else {
 
-    // if (!Cost_orig) { // cost remains null
-    //   Cost = None;
+      if (!Cost_orig) {
+        // keep it as it is and don't modify
+        Cost = Cost_orig;
+        AUTO2_LOG("ORIGINAL Cost Result: NULL\n");
+        AUTO2_LOG("MODIFIED Cost Result: NULL\n");
 
-    //   auto2Log << "ORIGINAL Cost Result: null\n";
-    //   auto2Log << "MODIFIED Cost Result: null\n";
-    // }
-    // else // set cost to configured values
-    // {
-    //   // parse config parameters and set them to cost value
-    //   auto2Config.open(AUTO2_CONFIG_FILE_NAME, std::ios::in);
-      
-    //   if (auto2Config.is_open()) {
-    //     std::string name;
-    //     unsigned UnrolledCost = 0;
-    //     unsigned RolledDynamicCost = 0;
+      } else {
+        if (auto2_config->prior_name == "Original") {
+          // keep it as it is and don't modify
+          Cost = Cost_orig;
 
-    //     unsigned count = 0;
-    //     std::string line;
-    //     while(std::getline(auto2Config, line)) {
-    //       if (line.empty()) continue;
+        } else {
+          unsigned UnrolledCost = 0;
+          unsigned RolledDynamicCost = 0;
+  
+          std::istringstream f(auto2_config->value_data);
+          std::string line;
+          int counter = 0;
+          while (std::getline(f, line)) {
+              if (line.empty()) continue;
+  
+              if (counter == 0) {
+                UnrolledCost = static_cast<unsigned>(std::atoi(line.c_str()));
+              } else if (counter == 1) {
+                RolledDynamicCost = static_cast<unsigned>(std::atoi(line.c_str()));
+              } else {
+                DEBUG_WITH_TYPE("auto2", dbgs() << "ERROR: invalid value configuration in auto2 config.\n");
+              }
+              counter++;
+          }
+  
+          Cost = {{UnrolledCost, RolledDynamicCost}};
+        }
 
-    //       if (count == 0) name = line;
-    //       if (count == 1) UnrolledCost = static_cast<unsigned>(std::atoi(line.c_str()));
-    //       else if (count == 2) RolledDynamicCost = static_cast<unsigned>(std::atoi(line.c_str()));
-    //       else auto2Log << "WARNING more config values provided than expected!\n";
-    //       count++;
-    //     }
-
-    //     auto2Log << name << " prior configured.\n";
-    //     if (name == "Original") {
-    //       Cost = Cost_orig;
-    //     } else {
-    //       Cost = {{UnrolledCost, RolledDynamicCost}};
-    //     }
-    //   } else {
-    //     auto2Log << "WARNING unable to open auto2 config file! Using original values.\n";
-    //     Cost = Cost_orig;
-    //   } 
-
-    //   auto2Config.close();
-
-
-    //   auto2Log << "ORIGINAL Cost Result: UnrolledCost " << Cost_orig->UnrolledCost 
-    //           << " RolledDynamicCost: " << Cost_orig->RolledDynamicCost << "\n";
-    //   auto2Log << "MODIFIED Cost Result: UnrolledCost " << Cost->UnrolledCost 
-    //           << " RolledDynamicCost: " << Cost->RolledDynamicCost << "\n";
-    // }
-
-    // auto2Log.close();
+        AUTO2_LOG("ORIGINAL Cost Result: UnrolledCost " << Cost_orig->UnrolledCost
+          << " RolledDynamicCost: " << Cost_orig->RolledDynamicCost << "\n");
+        AUTO2_LOG("MODIFIED Cost Result: UnrolledCost " << Cost->UnrolledCost 
+          << " RolledDynamicCost: " << Cost->RolledDynamicCost << "\n");
+      }
+    }
 
     return Cost;
-
 #else
     // return original heuristic result
     return analyzeLoopUnrollCost_original(
@@ -986,7 +985,7 @@ bool llvm::computeUnrollCount(
     uint64_t unrolledLoopSize = getUnrolledLoopSize(LoopSize, UP);
 
 #ifdef AUTO2
-    std::call_once(auto2_init, load_auto2_config);
+    std::call_once(auto2_init, initialise_auto2);
 #endif
 
     AUTO2_LOG("full unrolling considered\n")
