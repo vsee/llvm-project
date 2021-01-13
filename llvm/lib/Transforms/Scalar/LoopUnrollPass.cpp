@@ -754,9 +754,8 @@ static Optional<EstimatedUnrollCost> analyzeLoopUnrollCost(
       if (!Cost_orig) {
         // keep it as it is and don't modify
         Cost = Cost_orig;
-        AUTO2_LOG("ORIGINAL Cost Result: NULL\n");
-        AUTO2_LOG("MODIFIED Cost Result: NULL\n");
-
+        AUTO2_LOG("AUTO2-DATA UnrolledCost NULL NULL\n");
+        AUTO2_LOG("AUTO2-DATA RolledDynamicCost NULL NULL\n");
       } else {
         if (auto2_config->prior_name == "Original") {
           // keep it as it is and don't modify
@@ -784,11 +783,8 @@ static Optional<EstimatedUnrollCost> analyzeLoopUnrollCost(
   
           Cost = {{UnrolledCost, RolledDynamicCost}};
         }
-
-        AUTO2_LOG("ORIGINAL Cost Result: UnrolledCost " << Cost_orig->UnrolledCost
-          << " RolledDynamicCost: " << Cost_orig->RolledDynamicCost << "\n");
-        AUTO2_LOG("MODIFIED Cost Result: UnrolledCost " << Cost->UnrolledCost 
-          << " RolledDynamicCost: " << Cost->RolledDynamicCost << "\n");
+        AUTO2_LOG("AUTO2-DATA UnrolledCost " << Cost_orig->UnrolledCost << " " << Cost->UnrolledCost << "\n");
+        AUTO2_LOG("AUTO2-DATA RolledDynamicCost " << Cost_orig->RolledDynamicCost << " " << Cost->RolledDynamicCost << "\n");
       }
     }
 
